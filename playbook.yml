@@ -1,0 +1,101 @@
+- name: Final Exam
+  hosts: servers
+  become: true
+  vars_files:
+    - config.yaml
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install nginx
+      package:
+        name: nginx
+        state: present
+
+    - name: Set web page
+      copy:
+        content: "<h1>{{ web_message }}</h1>\n"
+        dest: /usr/share/nginx/html/index.html
+
+    - name: Set web page for Debian
+      copy:
+        content: "<h1>{{ web_message }}</h1>\n"
+        dest: /var/www/html/index.html
+      when: ansible_os_family == "Debian"
+
+    - name: Start nginx
+      service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Create node_exporter folder
+      file:
+        path: /opt/node_exporter
+        state: directory
+
+    - name: Download and extract node_exporter
+      unarchive:
+        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /opt/node_exporter
+        extra_opts: [--strip-components=1]
+        remote_src: true
+        creates: /opt/node_exporter/node_exporter
+
+    - name: Create node_exporter service
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          ExecStart=/opt/node_exporter/node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+
+    - name: Start node_exporter
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Change MOTD
+      copy:
+        content: "Ansible Managed by {{ username }}\n"
+        dest: /etc/motd
+
+    - name: Check nginx
+      uri:
+        url: http://localhost
+        return_content: true
+      register: web_result
+
+    - name: Show nginx output
+      debug:
+        msg: "{{ web_result.content }}"
+
+    - name: Wait for node_exporter
+      wait_for:
+        port: 9100
+        timeout: 30
+
+    - name: Check node_exporter
+      uri:
+        url: http://localhost:9100/metrics
+        status_code: 200
+
+    - name: Show MOTD
+      command: cat /etc/motd
+      register: motd_result
+      changed_when: false
+
+    - name: Show MOTD output
+      debug:
+        msg: "{{ motd_result.stdout }}"

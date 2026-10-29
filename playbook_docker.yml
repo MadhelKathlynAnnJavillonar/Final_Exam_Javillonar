@@ -1,0 +1,83 @@
+- name: Final Exam Docker
+  hosts: servers
+  become: true
+  vars_files:
+    - config.yaml
+
+  tasks:
+    - name: Install Docker on Ubuntu
+      apt:
+        name: docker.io
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install Docker on CentOS
+      shell: curl -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+      when: ansible_os_family == "RedHat"
+
+    - name: Start Docker
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create web folder
+      file:
+        path: /opt/web
+        state: directory
+
+    - name: Set web page
+      copy:
+        content: "<h1>{{ web_message }}</h1>\n"
+        dest: /opt/web/index.html
+
+    - name: Run nginx container
+      shell: docker rm -f nginx_c; docker run -d --name nginx_c --restart always -p 8080:80 -v /opt/web:/usr/share/nginx/html:ro,z nginx
+
+    - name: Run node_exporter container
+      shell: docker rm -f node_c; docker run -d --name node_c --restart always -p 9101:9100 prom/node-exporter
+
+    - name: Change MOTD
+      copy:
+        content: "Ansible Managed by {{ username }}\n"
+        dest: /etc/motd
+
+    - name: Wait for containers
+      pause:
+        seconds: 5
+
+    - name: Check nginx
+      uri:
+        url: http://localhost:8080
+        return_content: true
+      register: web_result
+
+    - name: Show nginx output
+      debug:
+        msg: "{{ web_result.content }}"
+
+    - name: Check node_exporter
+      uri:
+        url: http://localhost:9101/metrics
+        status_code: 200
+
+    - name: List containers
+      command: docker ps --format "{{ '{{.Names}} {{.Status}}' }}"
+      register: docker_result
+      changed_when: false
+
+    - name: Show containers
+      debug:
+        msg: "{{ docker_result.stdout_lines }}"
+
+    - name: Show MOTD
+      command: cat /etc/motd
+      register: motd_result
+      changed_when: false
+
+    - name: Show MOTD output
+      debug:
+        msg: "{{ motd_result.stdout }}"
